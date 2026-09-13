@@ -168,9 +168,9 @@ export async function readRasterWindow(
   tiff: GeoTIFF,
   options: RasterWindowOptions,
 ): Promise<RasterWindowReading> {
-  const width = Math.max(2, Math.round(options.width ?? 32));
-  const height = Math.max(2, Math.round(options.height ?? 32));
-  const band = Math.max(1, Math.round(options.band ?? 1));
+  const width = requireInteger('width', options.width ?? 32, 2, MAX_RASTER_WINDOW_DIMENSION);
+  const height = requireInteger('height', options.height ?? 32, 2, MAX_RASTER_WINDOW_DIMENSION);
+  const band = requireInteger('band', options.band ?? 1, 1, tiff.count);
   const reproject = await getReproject(tiff);
   const [west, south, east, north] = options.bounds;
   const corners = [
@@ -196,6 +196,11 @@ export async function readRasterWindow(
   const y1 = Math.max(0, Math.floor(window[1]));
   const x2 = Math.min(selected.width, Math.ceil(window[2]));
   const y2 = Math.min(selected.height, Math.ceil(window[3]));
+  const nodata = selected.nodata;
+  const overviewLevel = images.indexOf(selected);
+  if (x2 <= x1 || y2 <= y1) {
+    return { values: [], width, height, band, nodata, overviewLevel };
+  }
   const tileX1 = Math.floor(x1 / selected.tileWidth);
   const tileY1 = Math.floor(y1 / selected.tileHeight);
   const tileX2 = Math.floor(Math.max(x1, x2 - 1) / selected.tileWidth);
@@ -207,22 +212,41 @@ export async function readRasterWindow(
   const tiles = await selected.fetchTiles(coordinates, { signal: options.signal, boundless: false });
   const tileMap = new Map(coordinates.map((coordinate, index) => [coordinate.join(","), tiles[index]]));
   const values: number[] = [];
-  const nodata = selected.nodata;
   for (let row = 0; row < height; row += 1) {
     for (let col = 0; col < width; col += 1) {
-      const sourceX = x1 + ((col + 0.5) / width) * Math.max(1, x2 - x1);
-      const sourceY = y1 + ((row + 0.5) / height) * Math.max(1, y2 - y1);
+      const sourceX = x1 + ((col + 0.5) / width) * (x2 - x1);
+      const sourceY = y1 + ((row + 0.5) / height) * (y2 - y1);
       const tileX = Math.floor(sourceX / selected.tileWidth);
       const tileY = Math.floor(sourceY / selected.tileHeight);
       const tile = tileMap.get(`${tileX},${tileY}`);
-      if (!tile?.array) continue;
+      if (!tile?.array) {
+        values.push(NaN);
+        continue;
+      }
       const offsetX = Math.min(tile.array.width - 1, Math.floor(sourceX) - tileX * selected.tileWidth);
       const offsetY = Math.min(tile.array.height - 1, Math.floor(sourceY) - tileY * selected.tileHeight);
-      const value = sampleAt(tile.array, band - 1, offsetY * tile.array.width + offsetX);
-      if (Number.isFinite(value) && (nodata === null || value !== nodata)) values.push(value);
+      values.push(sampleAt(tile.array, band - 1, offsetY * tile.array.width + offsetX));
     }
   }
-  return { values, width, height, band, nodata, overviewLevel: images.indexOf(selected) };
+  return { values, width, height, band, nodata, overviewLevel };
+}
+
+/** Largest output sample width/height accepted by {@link readRasterWindow}. */
+export const MAX_RASTER_WINDOW_DIMENSION = 1024;
+
+/**
+ * Round `value` to an integer and check it lies within `[min, max]`. Throws a
+ * `RangeError` for non-finite or out-of-range input so a bad option cannot
+ * produce an unbounded sampling loop or an invalid band lookup.
+ */
+function requireInteger(name: string, value: number, min: number, max: number): number {
+  const rounded = Math.round(value);
+  if (!Number.isFinite(rounded) || rounded < min || rounded > max) {
+    throw new RangeError(
+      `readRasterWindow: ${name} must be an integer between ${min} and ${max}, got ${value}`,
+    );
+  }
+  return rounded;
 }
 
 function pixelWindow(
