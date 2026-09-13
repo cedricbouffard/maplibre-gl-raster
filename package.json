@@ -28,7 +28,6 @@
     "*.css"
   ],
   "scripts": {
-    "prepare": "npm run build:lib",
     "dev": "vite",
     "build": "npm run build:lib && npm run build:geolibre",
     "build:lib": "tsc -p tsconfig.json && vite build",

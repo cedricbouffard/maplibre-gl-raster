@@ -216,9 +216,9 @@ export async function readRasterWindow(
       const tileY = Math.floor(sourceY / selected.tileHeight);
       const tile = tileMap.get(`${tileX},${tileY}`);
       if (!tile?.array) continue;
-      const localX = Math.min(tile.array.width - 1, Math.floor(sourceX) - tileX * selected.tileWidth);
-      const localY = Math.min(tile.array.height - 1, Math.floor(sourceY) - tileY * selected.tileHeight);
-      const value = sampleAt(tile.array, band - 1, localY * tile.array.width + localX);
+      const offsetX = Math.min(tile.array.width - 1, Math.floor(sourceX) - tileX * selected.tileWidth);
+      const offsetY = Math.min(tile.array.height - 1, Math.floor(sourceY) - tileY * selected.tileHeight);
+      const value = sampleAt(tile.array, band - 1, offsetY * tile.array.width + offsetX);
       if (Number.isFinite(value) && (nodata === null || value !== nodata)) values.push(value);
     }
   }
