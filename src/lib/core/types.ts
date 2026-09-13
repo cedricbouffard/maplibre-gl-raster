@@ -162,6 +162,29 @@ export interface RasterLayerInfo {
   state: RasterLayerState;
 }
 
+/** Options for reading a raster window from the loaded GeoTIFF cache. */
+export interface RasterWindowOptions {
+  /** WGS84 viewport bounds. */
+  bounds: [number, number, number, number];
+  /** Output sample width. @default 32 */
+  width?: number;
+  /** Output sample height. @default 32 */
+  height?: number;
+  /** 1-based band. @default 1 */
+  band?: number;
+  signal?: AbortSignal;
+}
+
+/** Values sampled from a raster viewport window. */
+export interface RasterWindowReading {
+  values: number[];
+  width: number;
+  height: number;
+  band: number;
+  nodata: number | null;
+  overviewLevel: number;
+}
+
 /**
  * Options for {@link AddRasterOptions} consumers (RasterControl.addRaster).
  */

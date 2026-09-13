@@ -3,6 +3,7 @@ import type {
   RasterArray,
   RasterTypedArray,
 } from '@developmentseed/geotiff';
+import type { RasterWindowOptions, RasterWindowReading } from '../core/types';
 import { epsgResolver, parseWkt } from '@developmentseed/proj';
 import proj4 from 'proj4';
 
@@ -156,4 +157,81 @@ export async function readPixelValues(
   }
 
   return { lngLat, col, row, bands };
+}
+
+/**
+ * Read one band from a WGS84 viewport in one batched tile operation. The
+ * coarsest suitable GeoTIFF overview is selected before fetching tiles, so
+ * viewport statistics do not need one network/decode operation per pixel.
+ */
+export async function readRasterWindow(
+  tiff: GeoTIFF,
+  options: RasterWindowOptions,
+): Promise<RasterWindowReading> {
+  const width = Math.max(2, Math.round(options.width ?? 32));
+  const height = Math.max(2, Math.round(options.height ?? 32));
+  const band = Math.max(1, Math.round(options.band ?? 1));
+  const reproject = await getReproject(tiff);
+  const [west, south, east, north] = options.bounds;
+  const corners = [
+    reproject(west, south), reproject(west, north),
+    reproject(east, south), reproject(east, north),
+  ];
+  const images = [tiff, ...tiff.overviews];
+  let selected = tiff as GeoTIFF | (typeof tiff.overviews)[number];
+  let window = pixelWindow(selected, corners);
+  const targetPixels = Math.max(width, height) * 4;
+  for (let index = 1; index < images.length; index += 1) {
+    const candidate = images[index];
+    const candidateWindow = pixelWindow(candidate, corners);
+    selected = candidate;
+    window = candidateWindow;
+    if (
+      candidateWindow[2] - candidateWindow[0] <= targetPixels &&
+      candidateWindow[3] - candidateWindow[1] <= targetPixels
+    ) break;
+  }
+
+  const x1 = Math.max(0, Math.floor(window[0]));
+  const y1 = Math.max(0, Math.floor(window[1]));
+  const x2 = Math.min(selected.width, Math.ceil(window[2]));
+  const y2 = Math.min(selected.height, Math.ceil(window[3]));
+  const tileX1 = Math.floor(x1 / selected.tileWidth);
+  const tileY1 = Math.floor(y1 / selected.tileHeight);
+  const tileX2 = Math.floor(Math.max(x1, x2 - 1) / selected.tileWidth);
+  const tileY2 = Math.floor(Math.max(y1, y2 - 1) / selected.tileHeight);
+  const coordinates: Array<[number, number]> = [];
+  for (let y = tileY1; y <= tileY2; y += 1) {
+    for (let x = tileX1; x <= tileX2; x += 1) coordinates.push([x, y]);
+  }
+  const tiles = await selected.fetchTiles(coordinates, { signal: options.signal, boundless: false });
+  const tileMap = new Map(coordinates.map((coordinate, index) => [coordinate.join(","), tiles[index]]));
+  const values: number[] = [];
+  const nodata = selected.nodata;
+  for (let row = 0; row < height; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      const sourceX = x1 + ((col + 0.5) / width) * Math.max(1, x2 - x1);
+      const sourceY = y1 + ((row + 0.5) / height) * Math.max(1, y2 - y1);
+      const tileX = Math.floor(sourceX / selected.tileWidth);
+      const tileY = Math.floor(sourceY / selected.tileHeight);
+      const tile = tileMap.get(`${tileX},${tileY}`);
+      if (!tile?.array) continue;
+      const localX = Math.min(tile.array.width - 1, Math.floor(sourceX) - tileX * selected.tileWidth);
+      const localY = Math.min(tile.array.height - 1, Math.floor(sourceY) - tileY * selected.tileHeight);
+      const value = sampleAt(tile.array, band - 1, localY * tile.array.width + localX);
+      if (Number.isFinite(value) && (nodata === null || value !== nodata)) values.push(value);
+    }
+  }
+  return { values, width, height, band, nodata, overviewLevel: images.indexOf(selected) };
+}
+
+function pixelWindow(
+  image: { transform: readonly number[]; width: number; height: number },
+  points: [number, number][],
+): [number, number, number, number] {
+  const pixels = points.map(([x, y]) => crsToPixel(image.transform, x, y));
+  return [
+    Math.min(...pixels.map(([x]) => x)), Math.min(...pixels.map(([, y]) => y)),
+    Math.max(...pixels.map(([x]) => x)), Math.max(...pixels.map(([, y]) => y)),
+  ];
 }
