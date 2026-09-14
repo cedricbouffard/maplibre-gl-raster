@@ -223,9 +223,12 @@ export async function readRasterWindow(
         values.push(NaN);
         continue;
       }
-      const offsetX = Math.min(tile.array.width - 1, Math.floor(sourceX) - tileX * selected.tileWidth);
-      const offsetY = Math.min(tile.array.height - 1, Math.floor(sourceY) - tileY * selected.tileHeight);
-      values.push(sampleAt(tile.array, band - 1, offsetY * tile.array.width + offsetX));
+      const localX = Math.min(tile.array.width - 1, Math.floor(sourceX) - tileX * selected.tileWidth);
+      const localY = Math.min(tile.array.height - 1, Math.floor(sourceY) - tileY * selected.tileHeight);
+      const value = sampleAt(tile.array, band - 1, localY * tile.array.width + localX);
+      values.push(
+        Number.isFinite(value) && (nodata === null || value !== nodata) ? value : NaN,
+      );
     }
   }
   return { values, width, height, band, nodata, overviewLevel };
